@@ -3,6 +3,8 @@
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
+#include "math.h"
+#include <vector>
 
 
 class Safety : public rclcpp::Node {
@@ -31,33 +33,57 @@ public:
 
 private:
     double speed = 0.0;
+    
+
     /// TODO: create ROS subscribers and publishers
 
     void drive_callback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
     {
-        /// TODO: update current speed
+        /// Updates current speed
+        speed = msg->twist.twist.linear.x; 
     }
 
     void scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) 
     {
+        // RCLCPP_INFO(this->get_logger(), "Data Received");
+        std::vector<float> ttc;
+        
         /// TODO: calculate TTC
         auto ranges = scan_msg->ranges;
         float incr_ang = scan_msg->angle_increment;
-        // float min_ang = scan_msg->angle_min;
+        // int n = ranges.size();  // Size of the array
+        float min_ang = scan_msg->angle_min;
         // float max_ang = scan_msg
-        int t = 1;
-        for (int i = 0; i < ranges.size(); i++)
+        int t = 0;
+        float val = 0;
+        for (float n : ranges)
         {
-            ranges[i] = ranges[i] * ( t * scan_msg->angle_increment );
-            if (t<=1080)
+            val = n / std::max(speed * std::cos(min_ang+incr_ang*t),0.0);
+            if (!isinf(val) && !isnan(val))
             {
-                t++;
+                ttc.push_back(val);
             }
             else
-                break;
+            {
+                ttc.push_back(3000.0);
+            }
+            
+            // RCLCPP_INFO(this->get_logger(), "Time is: '%f'",val);
+            t++;
         }
         
         /// TODO: publish drive/brake message
+        auto min_time = *std::min_element(ttc.begin(),ttc.end());
+        // RCLCPP_INFO(this->get_logger(), "'%f'",min_time);
+        if (min_time < 1.5)
+        {
+            RCLCPP_INFO(this->get_logger(), "STOP");
+            RCLCPP_INFO(this->get_logger(), "'%f'",min_time);
+            auto message = ackermann_msgs::msg::AckermannDriveStamped();
+            message.drive.speed = 0;
+            ackermann_publisher_->publish(message);
+        }
+        // RCLCPP_INFO(this->get_logger(), "Waiting for next signal");
     }
 
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laser_subscription_;
